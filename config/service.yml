@@ -10,13 +10,14 @@ threads:
   account_label: your_threads_account
 
 posting:
-  # v0.1では、ここで使用する投稿枠を定義します。
-  # GitHub Actions側のcron設定も同じ時刻へ合わせる必要があります。
+  # GitHub Actionsは10分ごとに起動し、ここで定義した時刻を確認します。
   time_slots:
     morning: "07:00"
     noon: "12:00"
     evening: "20:00"
 
+  # Actionsの開始遅延を吸収する確認幅です。
+  due_window_minutes: 30
   default_status: draft
   enable_threads: true
   enable_images: false
