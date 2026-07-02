@@ -1,0 +1,117 @@
+name: Process Threads Images
+
+on:
+  push:
+    paths:
+      - "incoming/images/**"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Check images without changing files"
+        required: false
+        default: "true"
+        type: choice
+        options:
+          - "true"
+          - "false"
+
+permissions:
+  contents: write
+  issues: write
+
+concurrency:
+  group: threads-process-images
+  cancel-in-progress: false
+
+jobs:
+  process:
+    if: ${{ vars.ASSETS_REPO_FULL_NAME != '' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout autopilot repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          path: autopilot
+
+      - name: Checkout public assets repository
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ vars.ASSETS_REPO_FULL_NAME }}
+          ref: ${{ vars.ASSETS_REPO_BRANCH || 'main' }}
+          token: ${{ secrets.ASSETS_REPO_TOKEN }}
+          path: autopilot/assets-repo
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        working-directory: autopilot
+        run: pip install -r requirements.txt
+
+      - name: Convert images and update schedules
+        working-directory: autopilot
+        run: |
+          ARGS=()
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.dry_run }}" = "true" ]; then
+            ARGS+=(--dry-run)
+          fi
+          python -m src.process_images "${ARGS[@]}"
+        env:
+          ASSETS_REPO_FULL_NAME: ${{ vars.ASSETS_REPO_FULL_NAME }}
+          ASSETS_REPO_BRANCH: ${{ vars.ASSETS_REPO_BRANCH || 'main' }}
+
+      - name: Commit public images
+        if: success()
+        working-directory: autopilot/assets-repo
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No public image changes."
+          else
+            git commit -m "chore: add Threads posting image"
+            git push
+          fi
+
+      - name: Commit image processing results
+        if: success()
+        working-directory: autopilot
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A incoming/images posts config
+          if git diff --cached --quiet; then
+            echo "No autopilot image changes."
+          else
+            git commit -m "chore: process Threads posting image"
+            git push
+          fi
+
+      - name: Create failure issue
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const title = `Threads image processing failed: run ${context.runNumber}`;
+            const body = [
+              'The image processing workflow failed.',
+              '',
+              `Run: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+              '',
+              'Check:',
+              '- ASSETS_REPO_FULL_NAME variable',
+              '- ASSETS_REPO_BRANCH variable',
+              '- ASSETS_REPO_TOKEN secret and repository permission',
+              '- incoming image file type',
+              '- image_key in the schedule YAML',
+            ].join('\n');
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title,
+              body,
+            });
