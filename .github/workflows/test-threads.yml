@@ -26,10 +26,11 @@ jobs:
       - name: Check Threads API
         run: |
           ARGS=()
-          if [ -n "${{ inputs.post_text }}" ]; then
-            ARGS+=(--post-text "${{ inputs.post_text }}")
+          if [ -n "$POST_TEXT" ]; then
+            ARGS+=(--post-text "$POST_TEXT")
           fi
           python -m src.test_threads "${ARGS[@]}"
         env:
+          POST_TEXT: ${{ inputs.post_text }}
           THREADS_ACCESS_TOKEN: ${{ secrets.THREADS_ACCESS_TOKEN }}
           THREADS_USER_ID: ${{ secrets.THREADS_USER_ID }}
