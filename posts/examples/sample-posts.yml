@@ -1,0 +1,52 @@
+- id: sample_text_001
+  date: "2099-01-01"
+  time_slot: morning
+  category: sample
+  title: テキスト投稿の例
+  text: |-
+    これはテキスト投稿のサンプルです。
+  status: draft
+  threads_post_id: ""
+  posted_at: ""
+  error: ""
+
+- id: sample_image_001
+  date: "2099-01-01"
+  time_slot: evening
+  category: sample
+  title: 画像付き投稿の例
+  text: |-
+    これは画像付き投稿のサンプルです。
+  image_key: sample_image_001
+  image_url: ""
+  alt: サンプル画像の説明
+  local_webp: ""
+  image_uploaded_at: ""
+  status: draft
+  threads_post_id: ""
+  posted_at: ""
+  error: ""
+
+- id: sample_thread_001
+  date: "2099-01-02"
+  time_slot: noon
+  category: sample
+  title: ツリー投稿の例
+  text: |-
+    1件目のサンプルです。
+  status: draft
+  threads_post_id: ""
+  thread_post_ids: []
+  posted_at: ""
+  error: ""
+  thread_posts:
+    - text: |-
+        2件目のサンプルです。
+      image_key: ""
+      image_url: ""
+      alt: ""
+    - text: |-
+        3件目のサンプルです。
+      image_key: ""
+      image_url: ""
+      alt: ""
