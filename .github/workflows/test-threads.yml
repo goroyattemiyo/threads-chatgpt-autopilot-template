@@ -1,0 +1,35 @@
+name: Test Threads Connection
+
+on:
+  workflow_dispatch:
+    inputs:
+      post_text:
+        description: "Optional short test text. Leave empty for profile check only."
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - run: pip install -r requirements.txt
+
+      - name: Check Threads API
+        run: |
+          ARGS=()
+          if [ -n "${{ inputs.post_text }}" ]; then
+            ARGS+=(--post-text "${{ inputs.post_text }}")
+          fi
+          python -m src.test_threads "${ARGS[@]}"
+        env:
+          THREADS_ACCESS_TOKEN: ${{ secrets.THREADS_ACCESS_TOKEN }}
+          THREADS_USER_ID: ${{ secrets.THREADS_USER_ID }}
