@@ -1,0 +1,3 @@
+# 互換用の空ファイルです。
+# 本番運用では posts/schedules/YYYY-MM-DD_to_YYYY-MM-DD.yml を使用します。
+[]
