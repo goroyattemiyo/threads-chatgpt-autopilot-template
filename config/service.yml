@@ -1,5 +1,4 @@
-# 顧客ごとの公開可能な設定をまとめるファイルです。
-# パスワード、アクセストークン、Personal Access Tokenは書かないでください。
+# 顧客ごとの公開可能な設定です。認証情報は保存しません。
 
 service:
   name: Threads ChatGPT Autopilot
@@ -10,21 +9,25 @@ threads:
   account_label: your_threads_account
 
 posting:
-  # GitHub Actionsは10分ごとに起動し、ここで定義した時刻を確認します。
+  # date + time_slot形式の後方互換用固定時刻です。
   time_slots:
     morning: "07:00"
     noon: "12:00"
-    evening: "20:00"
+    afternoon: "15:00"
+    evening: "17:00"
+    night: "20:00"
+    summary: "21:00"
 
-  # Actionsの開始遅延を吸収する確認幅です。
-  due_window_minutes: 30
+  default_delay_min_minutes: 2
+  default_delay_max_minutes: 14
+  default_thread_delay_min_seconds: 8
+  default_thread_delay_max_seconds: 25
+
   default_status: draft
-  enable_threads: true
+  enable_threads: false
   enable_images: false
 
 assets:
-  # 画像付き投稿を使う場合のみ設定します。
-  # 例: your-github-name/your-threads-assets
   repository: ""
   branch: main
   public_subdirectory: assets/webp
