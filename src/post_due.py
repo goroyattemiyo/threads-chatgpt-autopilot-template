@@ -24,6 +24,15 @@ def configured_window_minutes() -> int:
     return value
 
 
+def configured_threads_enabled() -> bool:
+    value: Any = get_config("posting", "enable_threads", default=False)
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+    return bool(value)
+
+
 def parse_slot_time(base: datetime, value: str) -> datetime:
     try:
         hour_text, minute_text = value.split(":", maxsplit=1)
@@ -58,6 +67,13 @@ def post_due(
     dry_run: bool = False,
     window_minutes: int | None = None,
 ) -> int:
+    if not dry_run and not configured_threads_enabled():
+        print(
+            "Threads posting is disabled by "
+            "config/service.yml posting.enable_threads."
+        )
+        return 0
+
     now = now_local()
     effective_window = (
         configured_window_minutes()
