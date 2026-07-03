@@ -1,19 +1,21 @@
-"""Post one ready schedule entry to Threads."""
+"""Publish one scheduled Threads post and resume interrupted threads safely."""
 from __future__ import annotations
 
 import argparse
+import random
 import sys
-from typing import Any
+import time
+from pathlib import Path
+from typing import Any, Callable, Protocol
 
-from .schedule_store import load_schedule_for_date, save_schedule_file
+from .schedule_store import ScheduleFile, load_schedule_for_date, save_schedule_file
+from .scheduler import thread_delay_bounds
 from .threads_api import ThreadsAPI
-from .utils import (
-    append_yaml_list,
-    repo_path,
-    require_env,
-    timestamp_local,
-    today_local_str,
-)
+from .utils import load_yaml, repo_path, require_env, save_yaml, timestamp_local, today_local_str
+
+
+class RandomLike(Protocol):
+    def randint(self, a: int, b: int) -> int: ...
 
 
 def find_post(
@@ -21,7 +23,7 @@ def find_post(
     date: str,
     time_slot: str,
 ) -> dict[str, Any] | None:
-    """Find one ready, not-yet-posted item."""
+    """Backward-compatible manual lookup by date and legacy time slot."""
     for item in schedule:
         if not isinstance(item, dict):
             continue
@@ -29,16 +31,13 @@ def find_post(
             continue
         if str(item.get("time_slot")) != time_slot:
             continue
-        if str(item.get("status", "")).lower() != "ready":
-            continue
-        if str(item.get("threads_post_id", "")).strip():
+        if str(item.get("status", "")).lower() not in {"ready", "posting"}:
             continue
         return item
     return None
 
 
 def normalize_thread_posts(raw: Any) -> list[dict[str, Any]]:
-    """Normalize reply items into dictionaries."""
     if not raw:
         return []
     if not isinstance(raw, list):
@@ -50,7 +49,6 @@ def normalize_thread_posts(raw: Any) -> list[dict[str, Any]]:
             part = {"text": part}
         if not isinstance(part, dict):
             raise ValueError(f"thread_posts[{index}] must be a mapping or string.")
-
         text = str(part.get("text", "")).strip()
         image_url = str(part.get("image_url", "")).strip()
         alt = str(part.get("alt", "")).strip()
@@ -90,11 +88,15 @@ def mark_error(item: dict[str, Any], message: str) -> None:
     item["error_at"] = timestamp_local()
 
 
-def append_post_log(
+def _log_path(custom_path: Path | None = None) -> Path:
+    return custom_path or repo_path("posts", "posted_log.yml")
+
+
+def append_post_log_once(
     *,
     post_id: str,
-    date: str,
-    time_slot: str,
+    schedule_id: str,
+    scheduled_at: str,
     item: dict[str, Any],
     thread_index: int,
     thread_role: str,
@@ -102,13 +104,23 @@ def append_post_log(
     image_url: str,
     posted_at: str,
     reply_to_id: str = "",
+    log_path: Path | None = None,
 ) -> None:
+    path = _log_path(log_path)
+    records = load_yaml(path, default=[])
+    if not isinstance(records, list):
+        raise ValueError(f"YAML file is not a list: {path}")
+    if any(
+        isinstance(record, dict) and str(record.get("post_id")) == post_id
+        for record in records
+    ):
+        return
     record: dict[str, Any] = {
         "post_id": post_id,
-        "schedule_id": item.get("id", ""),
-        "date": date,
-        "time_slot": time_slot,
+        "schedule_id": schedule_id,
+        "scheduled_at": scheduled_at,
         "category": item.get("category", ""),
+        "series_id": item.get("series_id", item.get("series", "")),
         "thread_index": thread_index,
         "thread_role": thread_role,
         "text_head": text[:100],
@@ -117,83 +129,208 @@ def append_post_log(
     }
     if reply_to_id:
         record["reply_to_id"] = reply_to_id
-    append_yaml_list(repo_path("posts", "posted_log.yml"), record)
+    records.append(record)
+    save_yaml(path, records)
 
 
-def post_daily(date: str, time_slot: str, dry_run: bool = False) -> int:
-    schedule_file = load_schedule_for_date(date)
-    item = find_post(schedule_file.entries, date, time_slot)
-    if not item:
-        print(f"No ready post found for date={date} time_slot={time_slot}.")
+def _progress(item: dict[str, Any]) -> dict[str, Any]:
+    raw = item.get("thread_progress")
+    progress = dict(raw) if isinstance(raw, dict) else {}
+    root_id = str(
+        progress.get("root_post_id") or item.get("threads_post_id") or ""
+    ).strip()
+    raw_reply_ids = progress.get("reply_ids", item.get("thread_post_ids", []))
+    reply_ids = (
+        [str(value) for value in raw_reply_ids]
+        if isinstance(raw_reply_ids, list)
+        else []
+    )
+    completed = progress.get("completed_replies", len(reply_ids))
+    try:
+        completed_int = int(completed)
+    except (TypeError, ValueError):
+        completed_int = len(reply_ids)
+    completed_int = max(completed_int, len(reply_ids))
+    raw_reply_times = progress.get("reply_posted_at", [])
+    reply_times = (
+        [str(value) for value in raw_reply_times]
+        if isinstance(raw_reply_times, list)
+        else []
+    )
+    progress.update(
+        {
+            "root_post_id": root_id,
+            "reply_ids": reply_ids,
+            "reply_posted_at": reply_times,
+            "completed_replies": completed_int,
+            "updated_at": str(progress.get("updated_at", "")),
+        }
+    )
+    return progress
+
+
+def post_schedule_item(
+    schedule_file: ScheduleFile,
+    item: dict[str, Any],
+    *,
+    dry_run: bool = False,
+    api: ThreadsAPI | None = None,
+    sleep_fn: Callable[[float], None] = time.sleep,
+    rng: RandomLike | None = None,
+    log_path: Path | None = None,
+) -> int:
+    """Publish or resume exactly one root post and its replies in this run."""
+    status = str(item.get("status", "")).lower().strip()
+    if status == "posted":
+        print(f"Skipping already posted item: {item.get('id', '')}")
+        return 0
+    if status not in {"ready", "posting"}:
+        print(f"Item is not publishable: status={status} id={item.get('id', '')}")
         return 0
 
     text = str(item.get("text", "")).strip()
     image_url = str(item.get("image_url", "")).strip()
     alt = str(item.get("alt", "")).strip()
     thread_posts = normalize_thread_posts(item.get("thread_posts", []))
-
     if not text:
         raise ValueError("Schedule item has no text.")
 
     print(
         "Target:",
-        f"date={date}",
-        f"time_slot={time_slot}",
+        f"scheduled_at={item.get('scheduled_at', '')}",
+        f"publish_after={item.get('publish_after', '')}",
         f"id={item.get('id', '')}",
     )
     print(text[:200])
-    if image_url:
-        print(f"root image_url={image_url}")
-    if thread_posts:
-        print(f"thread replies={len(thread_posts)}")
-
     if dry_run:
-        print("Dry run. No post was published.")
+        print("Dry run. No API call or YAML update was performed.")
         return 0
 
-    api = ThreadsAPI(
-        access_token=require_env("THREADS_ACCESS_TOKEN"),
-        user_id=require_env("THREADS_USER_ID"),
-    )
-
-    root_result = publish_one(api, text, image_url=image_url, alt=alt)
-    if "error" in root_result:
-        mark_error(item, str(root_result["error"]))
-        save_schedule_file(schedule_file)
-        print("Root post failed.")
-        return 1
-
-    root_post_id = str(root_result.get("id", ""))
-    if not root_post_id:
-        mark_error(item, f"No post id in result: {root_result}")
-        save_schedule_file(schedule_file)
-        print("Root post returned no post id.")
-        return 1
-
-    posted_at = timestamp_local()
-    item["threads_post_id"] = root_post_id
-    item["posted_at"] = posted_at
+    item["status"] = "posting"
     item["error"] = ""
-    append_post_log(
-        post_id=root_post_id,
-        date=date,
-        time_slot=time_slot,
-        item=item,
-        thread_index=1,
-        thread_role="root",
-        text=text,
-        image_url=image_url,
-        posted_at=posted_at,
-    )
+    progress = _progress(item)
+    item["thread_progress"] = progress
+    item["thread_post_ids"] = list(progress["reply_ids"])
+    if progress["root_post_id"]:
+        item["threads_post_id"] = progress["root_post_id"]
     save_schedule_file(schedule_file)
-    print(f"Posted root: {root_post_id}")
 
-    reply_ids: list[str] = []
-    parent_id = root_post_id
-    for part in thread_posts:
+    rng = rng or random.SystemRandom()
+    api_instance = api
+
+    def get_api() -> ThreadsAPI:
+        nonlocal api_instance
+        if api_instance is None:
+            api_instance = ThreadsAPI(
+                access_token=require_env("THREADS_ACCESS_TOKEN"),
+                user_id=require_env("THREADS_USER_ID"),
+            )
+        return api_instance
+
+    root_id = str(progress.get("root_post_id", "")).strip()
+    if not root_id:
+        root_result = publish_one(
+            get_api(),
+            text,
+            image_url=image_url,
+            alt=alt,
+        )
+        if "error" in root_result:
+            mark_error(item, f"Root post failed: {root_result['error']}")
+            save_schedule_file(schedule_file)
+            print("Root post failed.")
+            return 1
+        root_id = str(root_result.get("id", "")).strip()
+        if not root_id:
+            mark_error(item, f"Root post returned no id: {root_result}")
+            save_schedule_file(schedule_file)
+            return 1
+        root_posted_at = timestamp_local()
+        item["threads_post_id"] = root_id
+        item["posted_at"] = root_posted_at
+        progress.update(
+            {
+                "root_post_id": root_id,
+                "root_posted_at": root_posted_at,
+                "reply_ids": list(progress["reply_ids"]),
+                "reply_posted_at": list(progress.get("reply_posted_at", [])),
+                "completed_replies": len(progress["reply_ids"]),
+                "updated_at": root_posted_at,
+            }
+        )
+        item["thread_progress"] = progress
+        save_schedule_file(schedule_file)
+        append_post_log_once(
+            post_id=root_id,
+            schedule_id=str(item.get("id", "")),
+            scheduled_at=str(item.get("scheduled_at", "")),
+            item=item,
+            thread_index=1,
+            thread_role="root",
+            text=text,
+            image_url=image_url,
+            posted_at=root_posted_at,
+            log_path=log_path,
+        )
+        print(f"Posted root: {root_id}")
+    else:
+        known_root_time = str(
+            progress.get("root_posted_at") or item.get("posted_at") or ""
+        ).strip()
+        if known_root_time:
+            append_post_log_once(
+                post_id=root_id,
+                schedule_id=str(item.get("id", "")),
+                scheduled_at=str(item.get("scheduled_at", "")),
+                item=item,
+                thread_index=1,
+                thread_role="root",
+                text=text,
+                image_url=image_url,
+                posted_at=known_root_time,
+                log_path=log_path,
+            )
+        print(f"Resuming existing root: {root_id}")
+
+    reply_ids = list(progress.get("reply_ids", []))
+    reply_posted_times = list(progress.get("reply_posted_at", []))
+    completed = max(int(progress.get("completed_replies", 0)), len(reply_ids))
+    if completed > len(thread_posts):
+        mark_error(item, "thread_progress exceeds configured thread_posts.")
+        save_schedule_file(schedule_file)
+        return 1
+    for existing_index, existing_reply_id in enumerate(reply_ids):
+        if (
+            existing_index >= len(thread_posts)
+            or existing_index >= len(reply_posted_times)
+        ):
+            continue
+        existing_part = thread_posts[existing_index]
+        previous_id = root_id if existing_index == 0 else reply_ids[existing_index - 1]
+        append_post_log_once(
+            post_id=existing_reply_id,
+            schedule_id=str(item.get("id", "")),
+            scheduled_at=str(item.get("scheduled_at", "")),
+            item=item,
+            thread_index=existing_index + 2,
+            thread_role="reply",
+            text=str(existing_part.get("text", "")),
+            image_url=str(existing_part.get("image_url", "")),
+            posted_at=reply_posted_times[existing_index],
+            reply_to_id=previous_id,
+            log_path=log_path,
+        )
+    parent_id = reply_ids[-1] if reply_ids else root_id
+    minimum_seconds, maximum_seconds = thread_delay_bounds(item)
+
+    for zero_index in range(completed, len(thread_posts)):
+        part = thread_posts[zero_index]
+        delay_seconds = rng.randint(minimum_seconds, maximum_seconds)
+        print(f"Waiting {delay_seconds}s before thread reply {zero_index + 1}.")
+        sleep_fn(delay_seconds)
         reply_to_id = parent_id
         result = publish_one(
-            api,
+            get_api(),
             str(part.get("text", "")).strip(),
             image_url=str(part.get("image_url", "")).strip(),
             alt=str(part.get("alt", "")).strip(),
@@ -202,47 +339,75 @@ def post_daily(date: str, time_slot: str, dry_run: bool = False) -> int:
         if "error" in result:
             mark_error(
                 item,
-                f"Thread reply {part['index']} failed: {result['error']}",
+                f"Thread reply {zero_index + 1} failed: {result['error']}",
             )
-            item["thread_post_ids"] = reply_ids
             save_schedule_file(schedule_file)
-            print(f"Thread reply {part['index']} failed.")
+            print(f"Thread reply {zero_index + 1} failed.")
             return 1
-
-        reply_id = str(result.get("id", ""))
+        reply_id = str(result.get("id", "")).strip()
         if not reply_id:
-            mark_error(item, f"No reply post id in result: {result}")
-            item["thread_post_ids"] = reply_ids
+            mark_error(item, f"Thread reply {zero_index + 1} returned no id: {result}")
             save_schedule_file(schedule_file)
-            print(f"Thread reply {part['index']} returned no post id.")
             return 1
-
-        reply_ids.append(reply_id)
-        parent_id = reply_id
         reply_posted_at = timestamp_local()
-        append_post_log(
+        reply_ids.append(reply_id)
+        reply_posted_times.append(reply_posted_at)
+        parent_id = reply_id
+        progress.update(
+            {
+                "root_post_id": root_id,
+                "reply_ids": list(reply_ids),
+                "reply_posted_at": list(reply_posted_times),
+                "completed_replies": len(reply_ids),
+                "updated_at": reply_posted_at,
+            }
+        )
+        item["thread_post_ids"] = list(reply_ids)
+        item["thread_progress"] = progress
+        save_schedule_file(schedule_file)
+        append_post_log_once(
             post_id=reply_id,
-            date=date,
-            time_slot=time_slot,
+            schedule_id=str(item.get("id", "")),
+            scheduled_at=str(item.get("scheduled_at", "")),
             item=item,
-            thread_index=int(part["index"]) + 1,
+            thread_index=zero_index + 2,
             thread_role="reply",
             text=str(part.get("text", "")),
             image_url=str(part.get("image_url", "")),
             posted_at=reply_posted_at,
             reply_to_id=reply_to_id,
+            log_path=log_path,
         )
-        item["thread_post_ids"] = reply_ids
-        save_schedule_file(schedule_file)
-        print(f"Posted reply {part['index']}: {reply_id}")
+        print(f"Posted reply {zero_index + 1}: {reply_id}")
 
-    item["status"] = "posted"
-    item["thread_post_ids"] = reply_ids
+    finished_at = timestamp_local()
+    progress.update(
+        {
+            "root_post_id": root_id,
+            "reply_ids": list(reply_ids),
+            "reply_posted_at": list(reply_posted_times),
+            "completed_replies": len(reply_ids),
+            "updated_at": finished_at,
+        }
+    )
+    item["thread_progress"] = progress
+    item["thread_post_ids"] = list(reply_ids)
     item["thread_count"] = 1 + len(reply_ids)
+    item["status"] = "posted"
     item["error"] = ""
     save_schedule_file(schedule_file)
-    print(f"Posted thread root={root_post_id} replies={len(reply_ids)}")
+    print(f"Posted thread root={root_id} replies={len(reply_ids)}")
     return 0
+
+
+def post_daily(date: str, time_slot: str, dry_run: bool = False) -> int:
+    """Backward-compatible manual entry point."""
+    schedule_file = load_schedule_for_date(date)
+    item = find_post(schedule_file.entries, date, time_slot)
+    if not item:
+        print(f"No ready or posting item found for date={date} time_slot={time_slot}.")
+        return 0
+    return post_schedule_item(schedule_file, item, dry_run=dry_run)
 
 
 def main() -> None:
