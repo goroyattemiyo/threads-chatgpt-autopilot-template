@@ -2,18 +2,33 @@ name: Post Due Threads Posts
 
 on:
   schedule:
-    # Runs every 10 minutes. Python checks config/service.yml for actual slots.
-    - cron: "*/10 * * * *"
+    # Avoid minute 0 and check every five minutes.
+    - cron: '2-57/5 * * * *'
   workflow_dispatch:
     inputs:
       dry_run:
-        description: "Check due posts without publishing"
+        description: "Check one candidate without API calls or YAML updates"
         required: false
         default: "true"
         type: choice
         options:
           - "true"
           - "false"
+      audit_overdue:
+        description: "List overdue ready posts for manual classification"
+        required: false
+        default: false
+        type: boolean
+      post_id:
+        description: "Optional exact post ID for deliberate manual execution"
+        required: false
+        default: ""
+        type: string
+      allow_out_of_order:
+        description: "Allow an older post when a later post in the same series is posted"
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: write
@@ -40,27 +55,41 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Post due entries
-        run: |
-          ARGS=()
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.dry_run }}" = "true" ]; then
-            ARGS+=(--dry-run)
-          fi
-          python -m src.post_due "${ARGS[@]}"
+      - name: Process one due entry
         env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_DRY_RUN: ${{ inputs.dry_run }}
+          INPUT_AUDIT_OVERDUE: ${{ inputs.audit_overdue }}
+          INPUT_POST_ID: ${{ inputs.post_id }}
+          INPUT_ALLOW_OUT_OF_ORDER: ${{ inputs.allow_out_of_order }}
           THREADS_ACCESS_TOKEN: ${{ secrets.THREADS_ACCESS_TOKEN }}
           THREADS_USER_ID: ${{ secrets.THREADS_USER_ID }}
+        run: |
+          ARGS=()
+          if [ "$EVENT_NAME" = "workflow_dispatch" ] && [ "$INPUT_DRY_RUN" = "true" ]; then
+            ARGS+=(--dry-run)
+          fi
+          if [ "$EVENT_NAME" = "workflow_dispatch" ] && [ "$INPUT_AUDIT_OVERDUE" = "true" ]; then
+            ARGS+=(--audit-overdue)
+          fi
+          if [ "$EVENT_NAME" = "workflow_dispatch" ] && [ -n "$INPUT_POST_ID" ]; then
+            ARGS+=(--post-id "$INPUT_POST_ID")
+          fi
+          if [ "$EVENT_NAME" = "workflow_dispatch" ] && [ "$INPUT_ALLOW_OUT_OF_ORDER" = "true" ]; then
+            ARGS+=(--allow-out-of-order)
+          fi
+          python -m src.post_due "${ARGS[@]}"
 
-      - name: Commit posting results
+      - name: Commit posting progress
         if: always()
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add posts/schedule.yml posts/schedules posts/posted_log.yml
           if git diff --cached --quiet; then
-            echo "No posting result changes."
+            echo "No posting progress changes."
           else
-            git commit -m "chore: record Threads posting result"
+            git commit -m "chore: record Threads posting progress"
             git push
           fi
 
@@ -71,16 +100,18 @@ jobs:
           script: |
             const title = `Threads posting failed: run ${context.runNumber}`;
             const body = [
-              'The scheduled Threads posting workflow failed.',
+              'The Threads posting workflow failed.',
               '',
               `Run: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
               '',
               'Check:',
               '- Actions logs',
-              '- THREADS_ACCESS_TOKEN and THREADS_USER_ID are registered',
-              '- config/service.yml time slots',
-              '- posts/schedules status and error fields',
-              '- image_url is publicly accessible when using images',
+              '- posting.enable_threads',
+              '- THREADS_ACCESS_TOKEN and THREADS_USER_ID registration',
+              '- scheduled_at, publish_after, status and thread_progress',
+              '- public image URLs when using images',
+              '',
+              'Do not paste Secret values into the issue.',
             ].join('\n');
             await github.rest.issues.create({
               owner: context.repo.owner,
