@@ -50,6 +50,7 @@ def checkpoint_file(path: Path, message: str, retries: int = 3) -> None:
     }
 
     encoded_content = base64.b64encode(path.read_bytes()).decode("ascii")
+    commit_message = message if "[skip ci]" in message else f"{message} [skip ci]"
     last_status = 0
 
     for attempt in range(1, retries + 1):
@@ -74,7 +75,7 @@ def checkpoint_file(path: Path, message: str, retries: int = 3) -> None:
             )
 
         payload: dict[str, str] = {
-            "message": message,
+            "message": commit_message,
             "content": encoded_content,
             "branch": branch,
         }
