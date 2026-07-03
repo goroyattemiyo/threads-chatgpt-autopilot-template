@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import base64
-import os
 import time
 from pathlib import Path
 from urllib.parse import quote
@@ -17,20 +16,16 @@ class CheckpointError(RuntimeError):
 
 
 def checkpoint_enabled() -> bool:
-    """Return true only inside GitHub Actions with checkpointing enabled."""
+    """Enable checkpoints only when the posting workflow opts in explicitly."""
     return (
         optional_env("GITHUB_ACTIONS").lower() == "true"
-        and optional_env("ENABLE_GITHUB_CHECKPOINTS", "true").lower()
+        and optional_env("ENABLE_GITHUB_CHECKPOINTS").lower()
         in {"1", "true", "yes", "on"}
     )
 
 
 def checkpoint_file(path: Path, message: str, retries: int = 3) -> None:
-    """Commit one local file through the GitHub Contents API.
-
-    Outside GitHub Actions this is intentionally a no-op so local tests and
-    development do not require repository credentials.
-    """
+    """Commit one local file through the GitHub Contents API."""
     if not checkpoint_enabled():
         return
 
