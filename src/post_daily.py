@@ -8,10 +8,18 @@ import time
 from pathlib import Path
 from typing import Any, Callable, Protocol
 
+from .github_checkpoint import checkpoint_file
 from .schedule_store import ScheduleFile, load_schedule_for_date, save_schedule_file
 from .scheduler import thread_delay_bounds
 from .threads_api import ThreadsAPI
-from .utils import load_yaml, repo_path, require_env, save_yaml, timestamp_local, today_local_str
+from .utils import (
+    load_yaml,
+    repo_path,
+    require_env,
+    save_yaml,
+    timestamp_local,
+    today_local_str,
+)
 
 
 class RandomLike(Protocol):
@@ -92,6 +100,16 @@ def _log_path(custom_path: Path | None = None) -> Path:
     return custom_path or repo_path("posts", "posted_log.yml")
 
 
+def _save_schedule_checkpoint(schedule_file: ScheduleFile, message: str) -> None:
+    """Save locally and persist remotely before another API call is allowed."""
+    save_schedule_file(schedule_file)
+    checkpoint_file(schedule_file.path, message)
+
+
+def _save_log_checkpoint(path: Path, message: str) -> None:
+    checkpoint_file(path, message)
+
+
 def append_post_log_once(
     *,
     post_id: str,
@@ -105,7 +123,8 @@ def append_post_log_once(
     posted_at: str,
     reply_to_id: str = "",
     log_path: Path | None = None,
-) -> None:
+) -> bool:
+    """Append one unique log record and return whether the file changed."""
     path = _log_path(log_path)
     records = load_yaml(path, default=[])
     if not isinstance(records, list):
@@ -114,7 +133,7 @@ def append_post_log_once(
         isinstance(record, dict) and str(record.get("post_id")) == post_id
         for record in records
     ):
-        return
+        return False
     record: dict[str, Any] = {
         "post_id": post_id,
         "schedule_id": schedule_id,
@@ -131,6 +150,7 @@ def append_post_log_once(
         record["reply_to_id"] = reply_to_id
     records.append(record)
     save_yaml(path, records)
+    return True
 
 
 def _progress(item: dict[str, Any]) -> dict[str, Any]:
@@ -213,7 +233,10 @@ def post_schedule_item(
     item["thread_post_ids"] = list(progress["reply_ids"])
     if progress["root_post_id"]:
         item["threads_post_id"] = progress["root_post_id"]
-    save_schedule_file(schedule_file)
+    _save_schedule_checkpoint(
+        schedule_file,
+        "chore: mark Threads post as posting",
+    )
 
     rng = rng or random.SystemRandom()
     api_instance = api
@@ -228,6 +251,8 @@ def post_schedule_item(
         return api_instance
 
     root_id = str(progress.get("root_post_id", "")).strip()
+    log_file = _log_path(log_path)
+
     if not root_id:
         root_result = publish_one(
             get_api(),
@@ -237,14 +262,21 @@ def post_schedule_item(
         )
         if "error" in root_result:
             mark_error(item, f"Root post failed: {root_result['error']}")
-            save_schedule_file(schedule_file)
+            _save_schedule_checkpoint(
+                schedule_file,
+                "chore: record Threads root failure",
+            )
             print("Root post failed.")
             return 1
         root_id = str(root_result.get("id", "")).strip()
         if not root_id:
             mark_error(item, f"Root post returned no id: {root_result}")
-            save_schedule_file(schedule_file)
+            _save_schedule_checkpoint(
+                schedule_file,
+                "chore: record missing Threads root id",
+            )
             return 1
+
         root_posted_at = timestamp_local()
         item["threads_post_id"] = root_id
         item["posted_at"] = root_posted_at
@@ -259,8 +291,11 @@ def post_schedule_item(
             }
         )
         item["thread_progress"] = progress
-        save_schedule_file(schedule_file)
-        append_post_log_once(
+        _save_schedule_checkpoint(
+            schedule_file,
+            "chore: checkpoint Threads root post id",
+        )
+        if append_post_log_once(
             post_id=root_id,
             schedule_id=str(item.get("id", "")),
             scheduled_at=str(item.get("scheduled_at", "")),
@@ -271,24 +306,31 @@ def post_schedule_item(
             image_url=image_url,
             posted_at=root_posted_at,
             log_path=log_path,
-        )
+        ):
+            _save_log_checkpoint(
+                log_file,
+                "chore: record Threads root post log",
+            )
         print(f"Posted root: {root_id}")
     else:
         known_root_time = str(
             progress.get("root_posted_at") or item.get("posted_at") or ""
         ).strip()
-        if known_root_time:
-            append_post_log_once(
-                post_id=root_id,
-                schedule_id=str(item.get("id", "")),
-                scheduled_at=str(item.get("scheduled_at", "")),
-                item=item,
-                thread_index=1,
-                thread_role="root",
-                text=text,
-                image_url=image_url,
-                posted_at=known_root_time,
-                log_path=log_path,
+        if known_root_time and append_post_log_once(
+            post_id=root_id,
+            schedule_id=str(item.get("id", "")),
+            scheduled_at=str(item.get("scheduled_at", "")),
+            item=item,
+            thread_index=1,
+            thread_role="root",
+            text=text,
+            image_url=image_url,
+            posted_at=known_root_time,
+            log_path=log_path,
+        ):
+            _save_log_checkpoint(
+                log_file,
+                "chore: restore Threads root post log",
             )
         print(f"Resuming existing root: {root_id}")
 
@@ -297,8 +339,12 @@ def post_schedule_item(
     completed = max(int(progress.get("completed_replies", 0)), len(reply_ids))
     if completed > len(thread_posts):
         mark_error(item, "thread_progress exceeds configured thread_posts.")
-        save_schedule_file(schedule_file)
+        _save_schedule_checkpoint(
+            schedule_file,
+            "chore: record invalid Threads thread progress",
+        )
         return 1
+
     for existing_index, existing_reply_id in enumerate(reply_ids):
         if (
             existing_index >= len(thread_posts)
@@ -307,7 +353,7 @@ def post_schedule_item(
             continue
         existing_part = thread_posts[existing_index]
         previous_id = root_id if existing_index == 0 else reply_ids[existing_index - 1]
-        append_post_log_once(
+        if append_post_log_once(
             post_id=existing_reply_id,
             schedule_id=str(item.get("id", "")),
             scheduled_at=str(item.get("scheduled_at", "")),
@@ -319,7 +365,12 @@ def post_schedule_item(
             posted_at=reply_posted_times[existing_index],
             reply_to_id=previous_id,
             log_path=log_path,
-        )
+        ):
+            _save_log_checkpoint(
+                log_file,
+                "chore: restore Threads reply post log",
+            )
+
     parent_id = reply_ids[-1] if reply_ids else root_id
     minimum_seconds, maximum_seconds = thread_delay_bounds(item)
 
@@ -341,14 +392,22 @@ def post_schedule_item(
                 item,
                 f"Thread reply {zero_index + 1} failed: {result['error']}",
             )
-            save_schedule_file(schedule_file)
+            _save_schedule_checkpoint(
+                schedule_file,
+                f"chore: record Threads reply {zero_index + 1} failure",
+            )
             print(f"Thread reply {zero_index + 1} failed.")
             return 1
+
         reply_id = str(result.get("id", "")).strip()
         if not reply_id:
             mark_error(item, f"Thread reply {zero_index + 1} returned no id: {result}")
-            save_schedule_file(schedule_file)
+            _save_schedule_checkpoint(
+                schedule_file,
+                f"chore: record missing Threads reply {zero_index + 1} id",
+            )
             return 1
+
         reply_posted_at = timestamp_local()
         reply_ids.append(reply_id)
         reply_posted_times.append(reply_posted_at)
@@ -364,8 +423,11 @@ def post_schedule_item(
         )
         item["thread_post_ids"] = list(reply_ids)
         item["thread_progress"] = progress
-        save_schedule_file(schedule_file)
-        append_post_log_once(
+        _save_schedule_checkpoint(
+            schedule_file,
+            f"chore: checkpoint Threads reply {zero_index + 1} id",
+        )
+        if append_post_log_once(
             post_id=reply_id,
             schedule_id=str(item.get("id", "")),
             scheduled_at=str(item.get("scheduled_at", "")),
@@ -377,7 +439,11 @@ def post_schedule_item(
             posted_at=reply_posted_at,
             reply_to_id=reply_to_id,
             log_path=log_path,
-        )
+        ):
+            _save_log_checkpoint(
+                log_file,
+                f"chore: record Threads reply {zero_index + 1} log",
+            )
         print(f"Posted reply {zero_index + 1}: {reply_id}")
 
     finished_at = timestamp_local()
@@ -395,7 +461,10 @@ def post_schedule_item(
     item["thread_count"] = 1 + len(reply_ids)
     item["status"] = "posted"
     item["error"] = ""
-    save_schedule_file(schedule_file)
+    _save_schedule_checkpoint(
+        schedule_file,
+        "chore: mark Threads post as posted",
+    )
     print(f"Posted thread root={root_id} replies={len(reply_ids)}")
     return 0
 
