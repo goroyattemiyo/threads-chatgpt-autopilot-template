@@ -6,6 +6,7 @@ import copy
 from typing import Any
 
 from .config_loader import get_config, service_timezone
+from .github_checkpoint import checkpoint_file
 from .post_daily import post_schedule_item
 from .schedule_store import ScheduleFile, load_active_schedule_files, save_schedule_file
 from .scheduler import ensure_timing_fields, overdue_ready_items, select_candidate
@@ -39,6 +40,7 @@ def initialize_active_timings(
     *,
     dry_run: bool,
 ) -> list[ScheduleFile]:
+    """Initialize scheduling fields once and persist them before posting."""
     timezone = service_timezone()
     working_files = _copy_schedule_files(schedule_files) if dry_run else schedule_files
     for schedule_file in working_files:
@@ -53,10 +55,15 @@ def initialize_active_timings(
             changed = changed or item_changed
         if changed and not dry_run:
             save_schedule_file(schedule_file)
+            checkpoint_file(
+                schedule_file.path,
+                "chore: initialize Threads posting schedule",
+            )
     return working_files
 
 
 def audit_overdue() -> int:
+    """List overdue ready posts without treating findings as workflow failure."""
     timezone = service_timezone()
     now = now_local()
     schedule_files = load_active_schedule_files(include_past=True)
@@ -70,7 +77,7 @@ def audit_overdue() -> int:
             f"- id={result['id']} file={result['file']} "
             f"classification={result['classification']} reason={result['reason']}"
         )
-    return 2
+    return 0
 
 
 def post_due(
