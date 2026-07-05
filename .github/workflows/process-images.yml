@@ -83,7 +83,7 @@ jobs:
         working-directory: autopilot
         run: |
           git config user.name "github-actions[bot]"
-          git config user.email "4189828+github-actions[bot]@users.noreply.github.com"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A incoming/images posts config
           if git diff --cached --quiet; then
             echo "No autopilot image changes."
@@ -104,15 +104,7 @@ jobs:
               '',
               `Run: ${runUrl}`,
               '',
-              'Check:',
-              '- ASSETS_REPO_FULL_NAME variable',
-              '- ASSETS_REPO_BRANCH variable',
-              '- ASSETS_REPO_TOKEN secret and repository permission',
-              '- posting.enable_images',
-              '- incoming image filename and file content',
-              '- image_key in the schedule YAML',
-              '',
-              'Do not place tokens or Secrets values in this issue.',
+              'Check image repository settings, image filename, file content, and image_key.',
             ].join('\n');
 
             const issues = await github.paginate(github.rest.issues.listForRepo, {
