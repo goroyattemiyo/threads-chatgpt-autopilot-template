@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       dry_run:
-        description: "Check images without changing files"
+        description: "Validate incoming images without changing files"
         required: false
         default: "true"
         type: choice
@@ -25,7 +25,6 @@ concurrency:
 
 jobs:
   process:
-    if: ${{ vars.ASSETS_REPO_FULL_NAME != '' }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout autopilot repository
@@ -33,14 +32,6 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           path: autopilot
-
-      - name: Checkout public assets repository
-        uses: actions/checkout@v4
-        with:
-          repository: ${{ vars.ASSETS_REPO_FULL_NAME }}
-          ref: ${{ vars.ASSETS_REPO_BRANCH || 'main' }}
-          token: ${{ secrets.ASSETS_REPO_TOKEN }}
-          path: autopilot/assets-repo
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -51,20 +42,30 @@ jobs:
         working-directory: autopilot
         run: pip install -r requirements.txt
 
-      - name: Convert images and update schedules
+      - name: Validate incoming images only
+        if: github.event_name == 'workflow_dispatch' && inputs.dry_run == 'true'
         working-directory: autopilot
-        run: |
-          ARGS=()
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.dry_run }}" = "true" ]; then
-            ARGS+=(--dry-run)
-          fi
-          python -m src.process_images "${ARGS[@]}"
+        run: python -m src.process_images --dry-run
+
+      - name: Checkout public assets repository
+        if: (github.event_name != 'workflow_dispatch' || inputs.dry_run != 'true') && vars.ASSETS_REPO_FULL_NAME != ''
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ vars.ASSETS_REPO_FULL_NAME }}
+          ref: ${{ vars.ASSETS_REPO_BRANCH || 'main' }}
+          token: ${{ secrets.ASSETS_REPO_TOKEN }}
+          path: autopilot/assets-repo
+
+      - name: Convert images and update schedules
+        if: github.event_name != 'workflow_dispatch' || inputs.dry_run != 'true'
+        working-directory: autopilot
+        run: python -m src.process_images
         env:
           ASSETS_REPO_FULL_NAME: ${{ vars.ASSETS_REPO_FULL_NAME }}
           ASSETS_REPO_BRANCH: ${{ vars.ASSETS_REPO_BRANCH || 'main' }}
 
       - name: Commit public images
-        if: success()
+        if: success() && (github.event_name != 'workflow_dispatch' || inputs.dry_run != 'true') && vars.ASSETS_REPO_FULL_NAME != ''
         working-directory: autopilot/assets-repo
         run: |
           git config user.name "github-actions[bot]"
@@ -78,11 +79,11 @@ jobs:
           fi
 
       - name: Commit image processing results
-        if: success()
+        if: success() && (github.event_name != 'workflow_dispatch' || inputs.dry_run != 'true')
         working-directory: autopilot
         run: |
           git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config user.email "4189828+github-actions[bot]@users.noreply.github.com"
           git add -A incoming/images posts config
           if git diff --cached --quiet; then
             echo "No autopilot image changes."
@@ -96,22 +97,46 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
-            const title = `Threads image processing failed: run ${context.runNumber}`;
+            const title = 'Threads image processing workflow failure';
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
             const body = [
-              'The image processing workflow failed.',
+              `Workflow run ${context.runNumber} failed.`,
               '',
-              `Run: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+              `Run: ${runUrl}`,
               '',
               'Check:',
               '- ASSETS_REPO_FULL_NAME variable',
               '- ASSETS_REPO_BRANCH variable',
               '- ASSETS_REPO_TOKEN secret and repository permission',
-              '- incoming image file type',
+              '- posting.enable_images',
+              '- incoming image filename and file content',
               '- image_key in the schedule YAML',
+              '',
+              'Do not place tokens or Secrets values in this issue.',
             ].join('\n');
-            await github.rest.issues.create({
+
+            const issues = await github.paginate(github.rest.issues.listForRepo, {
               owner: context.repo.owner,
               repo: context.repo.repo,
-              title,
-              body,
+              state: 'open',
+              per_page: 100,
             });
+            const existing = issues.find(issue =>
+              !issue.pull_request && issue.title === title
+            );
+
+            if (existing) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: existing.number,
+                body,
+              });
+            } else {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title,
+                body,
+              });
+            }
