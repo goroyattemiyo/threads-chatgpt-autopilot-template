@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import argparse
+import re
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 import yaml
 from PIL import Image
@@ -16,6 +18,10 @@ INCOMING_DIR = repo_path("incoming", "images")
 ASSET_REPO_DIR = repo_path("assets-repo")
 ASSET_LOG_PATH = repo_path("posts", "assets.yml")
 SUPPORTED_EXTS = {".webp", ".png", ".jpg", ".jpeg"}
+SUPPORTED_IMAGE_FORMATS = {"WEBP", "PNG", "JPEG"}
+IMAGE_KEY_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]{0,79}$")
+REPOSITORY_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
+PATH_SEGMENT_PATTERN = re.compile(r"^[A-Za-z0-9._-]+$")
 
 
 def configured_images_enabled() -> bool:
@@ -29,12 +35,20 @@ def configured_images_enabled() -> bool:
 
 
 def asset_subdirectory() -> Path:
-    value = str(
+    raw = str(
         get_config("assets", "public_subdirectory", default="assets/webp")
-    ).strip()
-    if not value:
+    ).strip().replace("\\", "/")
+    if not raw:
         raise ValueError("assets.public_subdirectory is empty.")
-    return Path(value)
+    path = Path(raw)
+    if path.is_absolute():
+        raise ValueError("assets.public_subdirectory must be a relative path.")
+    for part in path.parts:
+        if part in {"", ".", ".."} or not PATH_SEGMENT_PATTERN.fullmatch(part):
+            raise ValueError(
+                "assets.public_subdirectory contains an unsafe path segment."
+            )
+    return path
 
 
 def webp_quality() -> int:
@@ -47,9 +61,9 @@ def webp_quality() -> int:
 def assets_repository() -> str:
     configured = str(get_config("assets", "repository", default="")).strip()
     value = optional_env("ASSETS_REPO_FULL_NAME", configured)
-    if not value or "/" not in value:
+    if not value or not REPOSITORY_PATTERN.fullmatch(value):
         raise ValueError(
-            "Set assets.repository or the ASSETS_REPO_FULL_NAME variable as owner/repository."
+            "Set assets.repository or ASSETS_REPO_FULL_NAME as owner/repository."
         )
     return value
 
@@ -57,6 +71,14 @@ def assets_repository() -> str:
 def assets_branch() -> str:
     configured = str(get_config("assets", "branch", default="main")).strip() or "main"
     return optional_env("ASSETS_REPO_BRANCH", configured) or "main"
+
+
+def validate_image_key(image_key: str) -> None:
+    if not IMAGE_KEY_PATTERN.fullmatch(image_key):
+        raise ValueError(
+            "Image filename stem must use 1-80 lowercase ASCII letters, "
+            "numbers, hyphens, or underscores, and must start with a letter or number."
+        )
 
 
 def iter_images() -> list[Path]:
@@ -67,6 +89,31 @@ def iter_images() -> list[Path]:
         for path in sorted(INCOMING_DIR.iterdir())
         if path.is_file() and path.suffix.lower() in SUPPORTED_EXTS
     ]
+
+
+def validate_unique_image_keys(images: list[Path]) -> None:
+    seen: dict[str, str] = {}
+    for image_path in images:
+        image_key = image_path.stem
+        validate_image_key(image_key)
+        previous = seen.get(image_key)
+        if previous:
+            raise ValueError(
+                f"Duplicate image_key={image_key}: {previous} and {image_path.name}"
+            )
+        seen[image_key] = image_path.name
+
+
+def inspect_image(source_path: Path) -> tuple[str, int, int, int]:
+    with Image.open(source_path) as image:
+        image_format = str(image.format or "").upper()
+        width, height = image.size
+        image.verify()
+    if image_format not in SUPPORTED_IMAGE_FORMATS:
+        raise ValueError(f"Unsupported image content format: {image_format or 'unknown'}")
+    if width <= 0 or height <= 0:
+        raise ValueError("Image dimensions must be greater than zero.")
+    return image_format, width, height, source_path.stat().st_size
 
 
 def convert_to_webp(source_path: Path, output_dir: Path) -> Path:
@@ -90,9 +137,10 @@ def convert_to_webp(source_path: Path, output_dir: Path) -> Path:
 
 
 def raw_url(asset_relative_path: str) -> str:
+    encoded_path = quote(asset_relative_path.replace("\\", "/"), safe="/")
     return (
         f"https://raw.githubusercontent.com/"
-        f"{assets_repository()}/{assets_branch()}/{asset_relative_path}"
+        f"{assets_repository()}/{assets_branch()}/{encoded_path}"
     )
 
 
@@ -199,22 +247,36 @@ def process_images(dry_run: bool = False) -> int:
         print("No incoming images found.")
         return 0
 
-    if not ASSET_REPO_DIR.exists():
-        raise RuntimeError(
-            "The assets repository checkout was not found at assets-repo/."
-        )
+    try:
+        validate_unique_image_keys(images)
+    except ValueError as exc:
+        print(f"Image validation failed: {exc}")
+        return 1
 
-    output_dir = ASSET_REPO_DIR / asset_subdirectory()
+    output_dir: Path | None = None
+    if not dry_run:
+        if not ASSET_REPO_DIR.exists():
+            raise RuntimeError(
+                "The assets repository checkout was not found at assets-repo/."
+            )
+        output_dir = ASSET_REPO_DIR / asset_subdirectory()
+
     failures = 0
-
     for image_path in images:
         image_key = image_path.stem
         print(f"Processing image_key={image_key}")
-        if dry_run:
-            print("Dry run. No file or YAML was changed.")
-            continue
-
         try:
+            image_format, width, height, size_bytes = inspect_image(image_path)
+            print(
+                f"Validated image: format={image_format} "
+                f"size={width}x{height} bytes={size_bytes}"
+            )
+            if dry_run:
+                print("Dry run. No file or YAML was changed.")
+                continue
+
+            if output_dir is None:
+                raise RuntimeError("Public image output directory is unavailable.")
             webp_path = convert_to_webp(image_path, output_dir)
             relative_path = str(
                 asset_subdirectory() / webp_path.name
