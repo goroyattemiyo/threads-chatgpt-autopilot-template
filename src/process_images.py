@@ -18,6 +18,16 @@ ASSET_LOG_PATH = repo_path("posts", "assets.yml")
 SUPPORTED_EXTS = {".webp", ".png", ".jpg", ".jpeg"}
 
 
+def configured_images_enabled() -> bool:
+    """Return whether non-dry-run image processing is explicitly enabled."""
+    value: Any = get_config("posting", "enable_images", default=False)
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+    return bool(value)
+
+
 def asset_subdirectory() -> Path:
     value = str(
         get_config("assets", "public_subdirectory", default="assets/webp")
@@ -146,27 +156,8 @@ def update_part_with_url(
     return True
 
 
-def schedule_item_ready(item: dict[str, Any]) -> bool:
-    if not str(item.get("text", "")).strip():
-        return False
-    if str(item.get("image_key", "")).strip() and not str(
-        item.get("image_url", "")
-    ).strip():
-        return False
-
-    thread_posts = item.get("thread_posts", [])
-    if isinstance(thread_posts, list):
-        for part in thread_posts:
-            if not isinstance(part, dict):
-                continue
-            if str(part.get("image_key", "")).strip() and not str(
-                part.get("image_url", "")
-            ).strip():
-                return False
-    return True
-
-
 def update_schedules(image_key: str, url: str, asset_path: str) -> int:
+    """Attach the public URL without changing a post's approval status."""
     updated_count = 0
     for schedule_file in load_active_schedule_files(include_past=True):
         file_changed = False
@@ -190,19 +181,19 @@ def update_schedules(image_key: str, url: str, asset_path: str) -> int:
                         updated_count += 1
                         file_changed = True
 
-            if (
-                str(item.get("status", "")).lower() == "draft"
-                and schedule_item_ready(item)
-            ):
-                item["status"] = "ready"
-                file_changed = True
-
         if file_changed:
             save_schedule_file(schedule_file)
     return updated_count
 
 
 def process_images(dry_run: bool = False) -> int:
+    if not dry_run and not configured_images_enabled():
+        print(
+            "Image processing is disabled by "
+            "config/service.yml posting.enable_images."
+        )
+        return 0
+
     images = iter_images()
     if not images:
         print("No incoming images found.")
@@ -239,6 +230,7 @@ def process_images(dry_run: bool = False) -> int:
             )
             print(f"Created: assets-repo/{relative_path}")
             print(f"Schedule matches: {matches}")
+            print("Post status was not changed. Approval remains manual.")
             image_path.unlink(missing_ok=True)
         except Exception as exc:  # noqa: BLE001
             failures += 1
