@@ -29,3 +29,6 @@ jobs:
 
       - name: Validate configuration and schedules
         run: python -m src.validate_repository
+
+      - name: Validate Threads text length
+        run: python -m src.validate_text_lengths
