@@ -10,6 +10,7 @@ from .github_checkpoint import checkpoint_file
 from .post_daily import post_schedule_item
 from .schedule_store import ScheduleFile, load_active_schedule_files, save_schedule_file
 from .scheduler import ensure_timing_fields, overdue_ready_items, select_candidate
+from .text_limits import validate_post_item_texts
 from .utils import now_local
 
 
@@ -110,6 +111,13 @@ def post_due(
         else:
             print(f"No due posts at {now.isoformat(timespec='minutes')}.")
         return 0
+
+    text_errors = validate_post_item_texts(candidate.item)
+    if text_errors:
+        print("Threads text validation failed before API call:")
+        for error in text_errors:
+            print(f"- {error}")
+        return 1
 
     print(
         "Selected one candidate:",
