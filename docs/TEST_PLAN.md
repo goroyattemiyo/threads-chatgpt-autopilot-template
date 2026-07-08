@@ -107,7 +107,8 @@
 - [x] 顧客向け復旧手順を文書化する
 - [x] 顧客相当環境の`Test Error Recovery`が成功する
 - [x] 汎用テンプレートの`Test Error Recovery`が成功する
-- [ ] 画像処理workflowのトークン未登録・リポジトリ名誤りを確認する
+- [x] 顧客相当環境で画像処理workflowのトークン未登録・リポジトリ名誤りを確認する
+- [ ] 汎用テンプレートで画像処理workflowのトークン未登録・リポジトリ名誤りを確認する
 
 ### 2026-07-08：エラー復旧テスト
 
@@ -136,6 +137,26 @@
 - Threads API・実Secrets不使用
 - Node 24移行、`punycode`、`url.parse()`の表示は非推奨警告であり、jobは成功
 - `ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true`は設定しない
+
+### 2026-07-08：画像配信preflightテスト
+
+顧客相当環境：
+
+- `python -m unittest discover -s tests -p "test_image_delivery_recovery.py" -v`
+- 8件すべて成功
+- `Ran 8 tests in 0.004s`
+- `OK`
+- トークン未登録、リポジトリ名未設定・形式不正、401、403、404を検証
+- 通信エラー内のトークン相当値をマスク
+- preflight失敗時に画像・投稿YAML・画像履歴を変更しない
+- preflightがcheckout・画像変換より前に実行される
+- 実Secrets・実画像リポジトリ・Threads API不使用
+- workflow権限：`contents: read`
+
+汎用テンプレート：
+
+- 同じpreflight・テスト・workflow・復旧手順書を反映済み
+- `Test Image Delivery Recovery`成功確認待ち
 
 ## 8. 顧客環境リハーサル
 
