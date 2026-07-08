@@ -1,4 +1,4 @@
-"""Initialize minute-level schedules and publish one due root post per run."""
+"""Initialize schedules, publish one due post, and preserve recovery metadata."""
 from __future__ import annotations
 
 import argparse
@@ -6,12 +6,18 @@ import copy
 from typing import Any
 
 from .config_loader import get_config, service_timezone
-from .github_checkpoint import checkpoint_file
+from .error_recovery import (
+    apply_error_metadata,
+    clear_error_metadata,
+    recovery_action,
+    sanitize_error,
+)
+from .github_checkpoint import CheckpointError, checkpoint_file
 from .post_daily import post_schedule_item
 from .schedule_store import ScheduleFile, load_active_schedule_files, save_schedule_file
 from .scheduler import ensure_timing_fields, overdue_ready_items, select_candidate
 from .text_limits import validate_post_item_texts
-from .utils import now_local
+from .utils import now_local, timestamp_local
 
 
 def configured_threads_enabled() -> bool:
@@ -21,6 +27,78 @@ def configured_threads_enabled() -> bool:
     if isinstance(value, str):
         return value.strip().lower() in {"1", "true", "yes", "on"}
     return bool(value)
+
+
+def _item_has_image(item: dict[str, Any]) -> bool:
+    if str(item.get("image_url", "")).strip():
+        return True
+    thread_posts = item.get("thread_posts", [])
+    return isinstance(thread_posts, list) and any(
+        isinstance(part, dict) and str(part.get("image_url", "")).strip()
+        for part in thread_posts
+    )
+
+
+def _record_checkpoint_failure(
+    schedule_file: ScheduleFile,
+    item: dict[str, Any],
+    exc: Exception,
+) -> None:
+    """Save a local snapshot and print non-secret reconciliation identifiers."""
+    item["checkpoint_error"] = sanitize_error(exc)
+    item["checkpoint_failed_at"] = timestamp_local()
+    item["recovery_action"] = recovery_action("checkpoint")
+    save_schedule_file(schedule_file)
+
+    reply_ids = item.get("thread_post_ids", [])
+    if not isinstance(reply_ids, list):
+        reply_ids = []
+    print("CRITICAL_CHECKPOINT_FAILURE")
+    print(f"schedule_id={item.get('id', '')}")
+    print(f"root_post_id={item.get('threads_post_id', '')}")
+    print(f"reply_post_ids={','.join(str(value) for value in reply_ids)}")
+    print(f"checkpoint_error={sanitize_error(exc)}")
+    print("Do not rerun until Threads, the Actions log, and the recovery artifact are reconciled.")
+
+
+def _persist_failure(
+    schedule_file: ScheduleFile,
+    item: dict[str, Any],
+    value: Any,
+    *,
+    kind_override: str = "",
+) -> str:
+    kind = apply_error_metadata(
+        item,
+        value,
+        has_image=_item_has_image(item),
+        kind_override=kind_override,
+    )
+    save_schedule_file(schedule_file)
+    try:
+        checkpoint_file(
+            schedule_file.path,
+            f"chore: classify Threads {kind} failure",
+        )
+    except CheckpointError as exc:
+        _record_checkpoint_failure(schedule_file, item, exc)
+        raise
+    print(f"Recorded recoverable error: kind={kind} id={item.get('id', '')}")
+    return kind
+
+
+def _clear_recovered_error(schedule_file: ScheduleFile, item: dict[str, Any]) -> None:
+    if not clear_error_metadata(item):
+        return
+    save_schedule_file(schedule_file)
+    try:
+        checkpoint_file(
+            schedule_file.path,
+            "chore: clear recovered Threads error metadata",
+        )
+    except CheckpointError as exc:
+        _record_checkpoint_failure(schedule_file, item, exc)
+        raise
 
 
 def _copy_schedule_files(schedule_files: list[ScheduleFile]) -> list[ScheduleFile]:
@@ -125,11 +203,40 @@ def post_due(
         f"status={candidate.item.get('status', '')}",
         f"publish_after={candidate.item.get('publish_after', '')}",
     )
-    return post_schedule_item(
-        candidate.schedule_file,
-        candidate.item,
-        dry_run=dry_run,
-    )
+    try:
+        result = post_schedule_item(
+            candidate.schedule_file,
+            candidate.item,
+            dry_run=dry_run,
+        )
+    except CheckpointError as exc:
+        _record_checkpoint_failure(candidate.schedule_file, candidate.item, exc)
+        raise
+    except RuntimeError as exc:
+        message = sanitize_error(exc)
+        if (
+            "Required environment variable is missing" in message
+            or "Threads user_id is required" in message
+        ):
+            _persist_failure(
+                candidate.schedule_file,
+                candidate.item,
+                message,
+                kind_override="configuration",
+            )
+            print("Posting configuration failed before an API request could complete.")
+            return 1
+        raise
+
+    if result != 0:
+        _persist_failure(
+            candidate.schedule_file,
+            candidate.item,
+            candidate.item.get("error", "Unknown Threads posting error."),
+        )
+    elif str(candidate.item.get("status", "")).lower() == "posted":
+        _clear_recovered_error(candidate.schedule_file, candidate.item)
+    return result
 
 
 def main() -> None:
