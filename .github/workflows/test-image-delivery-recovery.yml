@@ -1,0 +1,48 @@
+name: Test Image Delivery Recovery
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - "src/image_delivery_preflight.py"
+      - "tests/test_image_delivery_recovery.py"
+      - ".github/workflows/process-images.yml"
+      - ".github/workflows/test-image-delivery-recovery.yml"
+  pull_request:
+    paths:
+      - "src/image_delivery_preflight.py"
+      - "tests/test_image_delivery_recovery.py"
+      - ".github/workflows/process-images.yml"
+      - ".github/workflows/test-image-delivery-recovery.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: python -m pip install --upgrade pip && pip install -r requirements.txt
+
+      - name: Run image delivery recovery tests
+        run: python -m unittest discover -s tests -p "test_image_delivery_recovery.py" -v
+
+      - name: Confirm no real delivery credentials are used
+        run: |
+          test -z "${ASSETS_REPO_TOKEN:-}"
+          test -z "${ASSETS_REPO_FULL_NAME:-}"
+          echo "No real image repository token or repository variable was provided to this test job."
