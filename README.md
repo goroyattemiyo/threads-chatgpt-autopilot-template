@@ -16,6 +16,7 @@ ChatGPTまたはClaudeの通常チャットから投稿予定を管理し、GitH
 - 投稿結果・エラーの書き戻し
 - 投稿履歴検索
 - 類似投稿検索
+- エラー分類・機密値マスク・復旧Artifact
 - AIチャットとの会話による投稿追加・修正・履歴検索
 
 X、Instagram、Facebook、Bluesky、TikTokなどには対応していません。
@@ -164,6 +165,12 @@ python -m src.search_posts similar \
 
 完全一致は類似度`1.0`です。全角・半角、英字の大小、空白、句読点を正規化します。意味理解による類似判定ではないため、最終判断は本文を目視確認してください。
 
+## エラー復旧
+
+投稿失敗時は、可能な範囲で`error_kind`、`error_code`、`recovery_action`を投稿YAMLへ記録します。Actions失敗時は復旧用Artifactを保存します。
+
+認証情報やトークンをIssue・チャットへ貼らず、`docs/ERROR_RECOVERY.md`の手順に従ってください。Threads上に投稿済みの可能性がある場合は、実画面・Actionsログ・Artifactを照合するまで再実行しません。
+
 ## 操作例
 
 - ChatGPTチャット：`docs/CHATGPT_USAGE.md`
@@ -185,7 +192,6 @@ python -m src.search_posts similar \
 ## 現在の未検証項目
 
 - 新規顧客アカウントへの導入リハーサル
-- Threads API認証エラー時の全パターン
 - GitHub Actionsの重複実行耐性
 - Public画像URLの長期運用
 - 10分間隔の投稿時刻判定
