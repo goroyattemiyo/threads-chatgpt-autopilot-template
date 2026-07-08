@@ -80,15 +80,16 @@
 - [x] 固定テストで近似本文を閾値以上で検出できる
 - [x] 固定テストで指定IDを類似検索から除外できる
 - [x] 顧客相当環境の`Test Post Search` workflowが成功する
-- [ ] 汎用テンプレートの`Test Post Search` workflowが成功する
+- [x] 汎用テンプレートの`Test Post Search` workflowが成功する
 
-### 2026-07-08：顧客相当環境の検索テスト
+### 2026-07-08：検索テスト
 
-- URL投稿を本文`URL投稿`、期間`2026-07-05`、カテゴリ`validation`で取得
+- 顧客相当環境でURL投稿を本文`URL投稿`、期間`2026-07-05`、カテゴリ`validation`で取得
 - 画像付き投稿`rehearsal_image_20260708_001`を抽出
 - 2026-07-08のツリー返信3件を抽出
 - 3件すべて`thread_role: reply`かつ`is_thread: true`
 - URL投稿の完全な本文を類似検索し、`similarity: 1.0`を確認
+- 汎用テンプレート側で検索ユニットテスト4件が成功
 - workflow権限：`contents: read`
 - Threads API・GitHub Secrets不使用
 
