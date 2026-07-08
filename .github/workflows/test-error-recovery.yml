@@ -1,0 +1,61 @@
+name: Test Error Recovery
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - "src/error_recovery.py"
+      - "src/threads_api.py"
+      - "src/post_due.py"
+      - "tests/test_error_recovery.py"
+      - ".github/workflows/post-due.yml"
+      - ".github/workflows/test-error-recovery.yml"
+  pull_request:
+    paths:
+      - "src/error_recovery.py"
+      - "src/threads_api.py"
+      - "src/post_due.py"
+      - "tests/test_error_recovery.py"
+      - ".github/workflows/post-due.yml"
+      - ".github/workflows/test-error-recovery.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: python -m pip install --upgrade pip && pip install -r requirements.txt
+
+      - name: Run error recovery tests
+        run: python -m unittest discover -s tests -p "test_error_recovery.py" -v
+
+      - name: Prepare safe artifact sample
+        run: |
+          mkdir -p recovery-snapshot/posts/schedules
+          cp config/service.yml recovery-snapshot/service.yml
+          printf '%s\n' 'sample only - no Secrets or real post data' > recovery-snapshot/README.txt
+          printf '%s\n' '[]' > recovery-snapshot/posts/posted_log.yml
+          printf '%s\n' '[]' > recovery-snapshot/posts/schedules/sample.yml
+
+      - name: Test recovery artifact upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: error-recovery-test-${{ github.run_id }}
+          path: recovery-snapshot
+          retention-days: 1
