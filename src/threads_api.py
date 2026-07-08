@@ -6,6 +6,8 @@ from typing import Any
 
 import requests
 
+from .error_recovery import sanitize_error, sanitize_error_value
+
 
 class ThreadsAPI:
     BASE_URL = "https://graph.threads.net/v1.0"
@@ -24,20 +26,24 @@ class ThreadsAPI:
                 try:
                     data = response.json()
                 except ValueError:
-                    data = {"raw": response.text}
+                    data = {"raw": sanitize_error(response.text)}
 
                 if response.status_code >= 400:
                     error = data.get("error", data) if isinstance(data, dict) else data
+                    sanitized_error = sanitize_error_value(error)
                     code = error.get("code") if isinstance(error, dict) else None
                     message = error.get("message") if isinstance(error, dict) else str(error)
                     if code in (4, 10, 190, 200, 368):
-                        return {"error": error, "status_code": response.status_code}
+                        return {
+                            "error": sanitized_error,
+                            "status_code": response.status_code,
+                        }
                     raise requests.exceptions.RequestException(
-                        f"HTTP {response.status_code}: {message}"
+                        f"HTTP {response.status_code}: {sanitize_error(message)}"
                     )
 
                 if isinstance(data, dict) and "error" in data:
-                    return data
+                    return sanitize_error_value(data)
                 return data if isinstance(data, dict) else {"data": data}
             except requests.exceptions.RequestException as exc:
                 last_error = exc
@@ -45,7 +51,7 @@ class ThreadsAPI:
                     wait = self.RETRY_BASE_WAIT * (2**attempt)
                     print(f"Retry {attempt + 1}/{self.MAX_RETRIES} after {wait}s")
                     time.sleep(wait)
-        return {"error": str(last_error)}
+        return {"error": sanitize_error(str(last_error))}
 
     def _require_user_id(self) -> str:
         if not self.user_id:
