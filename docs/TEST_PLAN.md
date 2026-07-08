@@ -108,7 +108,7 @@
 - [x] 顧客相当環境の`Test Error Recovery`が成功する
 - [x] 汎用テンプレートの`Test Error Recovery`が成功する
 - [x] 顧客相当環境で画像処理workflowのトークン未登録・リポジトリ名誤りを確認する
-- [ ] 汎用テンプレートで画像処理workflowのトークン未登録・リポジトリ名誤りを確認する
+- [x] 汎用テンプレートで画像処理workflowのトークン未登録・リポジトリ名誤りを確認する
 
 ### 2026-07-08：エラー復旧テスト
 
@@ -146,17 +146,22 @@
 - 8件すべて成功
 - `Ran 8 tests in 0.004s`
 - `OK`
+
+汎用テンプレート：
+
+- `python -m unittest discover -s tests -p "test_image_delivery_recovery.py" -v`
+- 8件すべて成功
+- `Ran 8 tests in 0.006s`
+- `OK`
+
+両環境で確認済み：
+
 - トークン未登録、リポジトリ名未設定・形式不正、401、403、404を検証
 - 通信エラー内のトークン相当値をマスク
 - preflight失敗時に画像・投稿YAML・画像履歴を変更しない
 - preflightがcheckout・画像変換より前に実行される
 - 実Secrets・実画像リポジトリ・Threads API不使用
 - workflow権限：`contents: read`
-
-汎用テンプレート：
-
-- 同じpreflight・テスト・workflow・復旧手順書を反映済み
-- `Test Image Delivery Recovery`成功確認待ち
 
 ## 8. 顧客環境リハーサル
 
