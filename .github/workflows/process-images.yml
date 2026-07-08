@@ -47,25 +47,35 @@ jobs:
         working-directory: autopilot
         run: python -m src.process_images --dry-run
 
+      - name: Validate image repository access
+        id: image_preflight
+        if: github.event_name != 'workflow_dispatch' || inputs.dry_run != 'true'
+        working-directory: autopilot
+        env:
+          ASSETS_REPO_FULL_NAME: ${{ vars.ASSETS_REPO_FULL_NAME }}
+          ASSETS_REPO_BRANCH: ${{ vars.ASSETS_REPO_BRANCH || 'main' }}
+          ASSETS_REPO_TOKEN: ${{ secrets.ASSETS_REPO_TOKEN }}
+        run: python -m src.image_delivery_preflight
+
       - name: Checkout public assets repository
-        if: (github.event_name != 'workflow_dispatch' || inputs.dry_run != 'true') && vars.ASSETS_REPO_FULL_NAME != ''
+        if: success() && (github.event_name != 'workflow_dispatch' || inputs.dry_run != 'true') && steps.image_preflight.outputs.enabled == 'true'
         uses: actions/checkout@v4
         with:
-          repository: ${{ vars.ASSETS_REPO_FULL_NAME }}
-          ref: ${{ vars.ASSETS_REPO_BRANCH || 'main' }}
+          repository: ${{ steps.image_preflight.outputs.repository }}
+          ref: ${{ steps.image_preflight.outputs.branch }}
           token: ${{ secrets.ASSETS_REPO_TOKEN }}
           path: autopilot/assets-repo
 
       - name: Convert images and update schedules
-        if: github.event_name != 'workflow_dispatch' || inputs.dry_run != 'true'
+        if: success() && (github.event_name != 'workflow_dispatch' || inputs.dry_run != 'true') && steps.image_preflight.outputs.enabled == 'true'
         working-directory: autopilot
         run: python -m src.process_images
         env:
-          ASSETS_REPO_FULL_NAME: ${{ vars.ASSETS_REPO_FULL_NAME }}
-          ASSETS_REPO_BRANCH: ${{ vars.ASSETS_REPO_BRANCH || 'main' }}
+          ASSETS_REPO_FULL_NAME: ${{ steps.image_preflight.outputs.repository }}
+          ASSETS_REPO_BRANCH: ${{ steps.image_preflight.outputs.branch }}
 
       - name: Commit public images
-        if: success() && (github.event_name != 'workflow_dispatch' || inputs.dry_run != 'true') && vars.ASSETS_REPO_FULL_NAME != ''
+        if: success() && (github.event_name != 'workflow_dispatch' || inputs.dry_run != 'true') && steps.image_preflight.outputs.enabled == 'true'
         working-directory: autopilot/assets-repo
         run: |
           git config user.name "github-actions[bot]"
@@ -79,7 +89,7 @@ jobs:
           fi
 
       - name: Commit image processing results
-        if: success() && (github.event_name != 'workflow_dispatch' || inputs.dry_run != 'true')
+        if: success() && (github.event_name != 'workflow_dispatch' || inputs.dry_run != 'true') && steps.image_preflight.outputs.enabled == 'true'
         working-directory: autopilot
         run: |
           git config user.name "github-actions[bot]"
@@ -92,20 +102,29 @@ jobs:
             git push
           fi
 
-      - name: Create failure issue
+      - name: Create or update failure issue
         if: failure()
         uses: actions/github-script@v7
+        env:
+          IMAGE_ERROR_KIND: ${{ steps.image_preflight.outputs.error_kind }}
+          IMAGE_ERROR_STATUS: ${{ steps.image_preflight.outputs.status_code }}
         with:
           script: |
             const title = 'Threads image processing workflow failure';
             const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const errorKind = process.env.IMAGE_ERROR_KIND || 'image_workflow';
+            const statusCode = process.env.IMAGE_ERROR_STATUS || '';
             const body = [
               `Workflow run ${context.runNumber} failed.`,
               '',
               `Run: ${runUrl}`,
+              `Error kind: ${errorKind}`,
+              statusCode ? `HTTP status: ${statusCode}` : '',
               '',
-              'Check image repository settings, image filename, file content, and image_key.',
-            ].join('\n');
+              'No image conversion or schedule update should be retried until the cause is confirmed.',
+              'Check ASSETS_REPO_FULL_NAME, ASSETS_REPO_BRANCH, and whether ASSETS_REPO_TOKEN is registered with access to the one public image repository.',
+              'Do not paste the token value into this Issue, chat, email, or logs.',
+            ].filter(Boolean).join('\n');
 
             const issues = await github.paginate(github.rest.issues.listForRepo, {
               owner: context.repo.owner,
