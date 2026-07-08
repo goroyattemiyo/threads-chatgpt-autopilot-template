@@ -106,18 +106,32 @@
 - [x] 投稿workflow失敗時にIssueを作成・追記する構成を用意する
 - [x] 顧客向け復旧手順を文書化する
 - [x] 顧客相当環境の`Test Error Recovery`が成功する
-- [ ] 汎用テンプレートの`Test Error Recovery`が成功する
+- [x] 汎用テンプレートの`Test Error Recovery`が成功する
 - [ ] 画像処理workflowのトークン未登録・リポジトリ名誤りを確認する
 
-### 2026-07-08：顧客相当環境のエラー復旧テスト
+### 2026-07-08：エラー復旧テスト
+
+顧客相当環境：
 
 - 実行ID：`28936222280`
 - job結論：`success`
-- 認証・画像URL・checkpoint・機密値マスクをダミー値とモックで検証
-- 復旧Artifact作成とアップロードに成功
 - Artifact名：`error-recovery-test-28936222280`
 - Artifact ID：`8165552361`
 - サイズ：1,040バイト
+
+汎用テンプレート：
+
+- 実行ID：`28938184856`
+- job結論：`success`
+- エラー復旧テスト、Artifact作成、Artifactアップロードがすべて成功
+- Artifact名：`error-recovery-test-28938184856`
+- Artifact ID：`8166352752`
+- サイズ：1,073バイト
+- SHA-256：`b28c0f8a7288cb5095536db85b72c98a99b79e29a9ad692d13b01bad65aeed32`
+
+共通条件：
+
+- 認証・画像URL・checkpoint・機密値マスクをダミー値とモックで検証
 - workflow権限：`contents: read`
 - Threads API・実Secrets不使用
 - Node 24移行、`punycode`、`url.parse()`の表示は非推奨警告であり、jobは成功
