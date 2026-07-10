@@ -11,8 +11,8 @@
   text: |-
     ここに投稿本文を書きます。
   scheduled_at: '2026-07-06T07:00:00+09:00'
-  delay_min_minutes: 2
-  delay_max_minutes: 14
+  delay_min_minutes: 0
+  delay_max_minutes: 2
   status: ready
   threads_post_id: ''
   thread_post_ids: []
@@ -23,8 +23,8 @@
 `ready`または`posting`を初めて確認したとき、システムが遅延を一度だけ抽選して次を保存します。
 
 ```yaml
-delay_minutes: 9
-publish_after: '2026-07-06T07:09:00+09:00'
+delay_minutes: 1
+publish_after: '2026-07-06T07:01:00+09:00'
 ```
 
 `publish_after`が存在する場合は再抽選しません。Actionsが起動するたびに時刻を後ろへずらす処理は行いません。
@@ -37,8 +37,8 @@ publish_after: '2026-07-06T07:09:00+09:00'
   text: |-
     画像付きの投稿です。
   scheduled_at: '2026-07-06T20:00:00+09:00'
-  delay_min_minutes: 2
-  delay_max_minutes: 14
+  delay_min_minutes: 0
+  delay_max_minutes: 2
   image_key: post_20260706_2000_001
   image_url: ''
   alt: 投稿画像の説明
@@ -60,8 +60,8 @@ publish_after: '2026-07-06T07:09:00+09:00'
   text: |-
     1件目の本文です。
   scheduled_at: '2026-07-06T12:00:00+09:00'
-  delay_min_minutes: 2
-  delay_max_minutes: 14
+  delay_min_minutes: 0
+  delay_max_minutes: 2
   thread_delay_min_seconds: 8
   thread_delay_max_seconds: 25
   status: ready
