@@ -94,6 +94,17 @@ def delay_bounds(item: dict[str, Any]) -> tuple[int, int]:
     return minimum, maximum
 
 
+def overdue_grace_minutes() -> int:
+    raw = get_config("posting", "overdue_grace_minutes", default=15)
+    try:
+        value = int(raw)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("overdue_grace_minutes must be an integer.") from exc
+    if value < 0 or value > 1440:
+        raise ValueError("overdue_grace_minutes must satisfy 0 <= value <= 1440.")
+    return value
+
+
 def thread_delay_bounds(item: dict[str, Any]) -> tuple[int, int]:
     minimum = _int_setting(
         item,
@@ -268,8 +279,9 @@ def overdue_ready_items(
     now: datetime,
     timezone: ZoneInfo,
 ) -> list[dict[str, str]]:
-    """List ready posts that need review without mutating YAML."""
+    """List ready posts beyond the configured grace period without mutating YAML."""
     results: list[dict[str, str]] = []
+    grace_minutes = overdue_grace_minutes()
     for schedule_file in schedule_files:
         for item in schedule_file.entries:
             if not isinstance(item, dict):
@@ -290,13 +302,13 @@ def overdue_ready_items(
                     }
                 )
                 continue
-            if effective <= now:
+            if effective + timedelta(minutes=grace_minutes) < now:
                 results.append(
                     {
                         "id": str(item.get("id", "")),
                         "file": str(schedule_file.path),
                         "classification": "review_required",
-                        "reason": "publish time has passed",
+                        "reason": f"publish time exceeded {grace_minutes}-minute grace period",
                     }
                 )
     return results
