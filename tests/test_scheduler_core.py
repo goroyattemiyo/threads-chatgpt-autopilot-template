@@ -40,8 +40,9 @@ class SchedulerCoreTests(unittest.TestCase):
             "time_slot": "afternoon",
             "status": "ready",
         }
-        ensure_timing_fields(item, JST, rng=FixedRandom(2))
+        ensure_timing_fields(item, JST, rng=FixedRandom(0))
         self.assertEqual(item["scheduled_at"], "2026-07-06T15:00:00+09:00")
+        self.assertEqual(item["publish_after"], "2026-07-06T15:00:00+09:00")
 
     def test_posting_resume_has_priority(self):
         schedule = ScheduleFile(
