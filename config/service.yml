@@ -18,8 +18,8 @@ posting:
     night: "20:00"
     summary: "21:00"
 
-  default_delay_min_minutes: 2
-  default_delay_max_minutes: 14
+  default_delay_min_minutes: 0
+  default_delay_max_minutes: 2
   default_thread_delay_min_seconds: 8
   default_thread_delay_max_seconds: 25
 
