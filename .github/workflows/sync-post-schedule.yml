@@ -1,0 +1,48 @@
+name: Sync Posting Schedule
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "config/service.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sync-posting-schedule
+  cancel-in-progress: true
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Generate posting cron
+        run: python -m src.sync_post_schedule
+
+      - name: Commit synchronized workflow
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .github/workflows/post-due.yml
+          if git diff --cached --quiet; then
+            echo "Posting schedule already synchronized."
+          else
+            git commit -m "chore: sync posting schedule"
+            git push
+          fi
