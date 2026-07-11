@@ -45,6 +45,22 @@
 - 画像付き投稿で`image_url`が空
 - ツリー内の画像URLが揃っていない
 
+## Scheduled実投稿テスト
+
+Scheduledによる自動投稿を検証するときは、手動実行と条件を混ぜません。開始前に次を確認します。
+
+1. `config/service.yml`の`posting.enable_threads`が`true`
+2. 対象投稿が新しい一意の`id`を持つ
+3. 対象投稿が`status: ready`
+4. `scheduled_at`と`publish_after`が意図した時刻
+5. 画像付き投稿は`image_url`と`alt`が設定済み
+6. 同じ時刻に別の`ready`投稿がない
+7. テスト中は`Run workflow`を押さず、Scheduledだけを待つ
+
+判定時は、ActionsのScheduled Run、対象投稿の`status`、`threads_post_id`、`posted_at`、Threads画面を照合します。Scheduled Runが確認できない場合、投稿設定やThreads APIの問題と断定せず、Workflowのスケジュール発火問題として切り分けます。
+
+テスト終了後、継続運用しない場合は`posting.enable_threads`を`false`へ戻し、戻ったことを再確認します。
+
 ## 投稿済みデータ
 
 - `status: posted`の項目は原則変更しない
