@@ -2,11 +2,26 @@ name: Post Due Threads Posts
 
 on:
   schedule:
-    # Default JST slots: 07:00, 12:00, 15:00, 17:00, 20:00, 21:00
-    # Run three times around each slot: -3, +2, +7 minutes.
-    # GitHub cron uses UTC.
-    - cron: '57 2,5,7,10,11,21 * * *'
-    - cron: '2,7 3,6,8,11,12,22 * * *'
+    # BEGIN AUTO-GENERATED POSTING SCHEDULE
+    - cron: '57 2 * * *'
+    - cron: '57 5 * * *'
+    - cron: '57 7 * * *'
+    - cron: '57 10 * * *'
+    - cron: '57 11 * * *'
+    - cron: '57 21 * * *'
+    - cron: '2 3 * * *'
+    - cron: '7 3 * * *'
+    - cron: '2 6 * * *'
+    - cron: '7 6 * * *'
+    - cron: '2 8 * * *'
+    - cron: '7 8 * * *'
+    - cron: '2 11 * * *'
+    - cron: '7 11 * * *'
+    - cron: '2 12 * * *'
+    - cron: '7 12 * * *'
+    - cron: '2 22 * * *'
+    - cron: '7 22 * * *'
+    # END AUTO-GENERATED POSTING SCHEDULE
   workflow_dispatch:
     inputs:
       dry_run:
