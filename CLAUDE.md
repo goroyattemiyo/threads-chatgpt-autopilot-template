@@ -38,6 +38,16 @@
 
 通常の投稿管理依頼では、`src/`、`.github/workflows/`、`SECURITY.md`を変更しないでください。
 
+## 投稿時刻とGitHub Actions
+
+- `config/service.yml`の`posting.time_slots`を投稿時刻の正本とします。
+- GitHub Actionsを24時間5分間隔では動かしません。
+- 既定では各投稿時刻の3分前、2分後、7分後だけ起動します。
+- `time_slots`または`schedule_offsets_minutes`を変更してmainへ反映すると、`Sync Posting Schedule`が`post-due.yml`のcronを自動更新します。
+- Claudeは通常、投稿時刻変更時に`.github/workflows/post-due.yml`を直接編集しません。
+- 設定変更後は`Sync Posting Schedule`と`Test Posting Schedule Sync`の結果を確認してください。
+- GitHub Actionsのscheduleは遅れる場合があるため、指定時刻ちょうどの投稿を保証しません。
+
 ## 自動投稿直前の安全確認
 
 `status: ready`へ変更すると、設定時刻との関係によっては次回のGitHub Actions実行で投稿される可能性があります。
