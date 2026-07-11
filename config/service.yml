@@ -9,7 +9,8 @@ threads:
   account_label: your_threads_account
 
 posting:
-  # date + time_slot形式の後方互換用固定時刻です。
+  # 自動投稿で使用する投稿枠です。
+  # 時刻を追加・変更すると、同期workflowがGitHub Actionsのcronを自動更新します。
   time_slots:
     morning: "07:00"
     noon: "12:00"
@@ -17,6 +18,13 @@ posting:
     evening: "17:00"
     night: "20:00"
     summary: "21:00"
+
+  # 各投稿時刻に対してActionsを起動する相対分です。
+  # 例：20:00なら19:57、20:02、20:07に起動します。
+  schedule_offsets_minutes:
+    - -3
+    - 2
+    - 7
 
   default_delay_min_minutes: 0
   default_delay_max_minutes: 0
