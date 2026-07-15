@@ -20,13 +20,29 @@ from .text_limits import validate_post_item_texts
 from .utils import now_local, timestamp_local
 
 
-def configured_threads_enabled() -> bool:
-    value: Any = get_config("posting", "enable_threads", default=False)
+def _config_bool(value: Any) -> bool:
     if isinstance(value, bool):
         return value
     if isinstance(value, str):
         return value.strip().lower() in {"1", "true", "yes", "on"}
     return bool(value)
+
+
+def configured_threads_enabled() -> bool:
+    return _config_bool(get_config("posting", "enable_threads", default=False))
+
+
+def configured_account_safety_locked() -> bool:
+    """Return whether live posting is manually blocked for account review."""
+    return _config_bool(
+        get_config("account_safety", "posting_locked", default=False)
+    )
+
+
+def account_safety_lock_reason() -> str:
+    """Return a public, non-secret explanation for the manual safety lock."""
+    value: Any = get_config("account_safety", "lock_reason", default="")
+    return str(value or "").strip()
 
 
 def _item_has_image(item: dict[str, Any]) -> bool:
@@ -165,6 +181,20 @@ def post_due(
     allow_out_of_order: bool = False,
     post_id: str = "",
 ) -> int:
+    if not dry_run and configured_account_safety_locked():
+        print(
+            "Threads live posting is blocked by "
+            "config/service.yml account_safety.posting_locked."
+        )
+        reason = account_safety_lock_reason()
+        if reason:
+            print(f"Safety lock reason: {reason}")
+        print(
+            "Review the Threads account state and posting records before "
+            "clearing the safety lock manually."
+        )
+        return 0
+
     if not dry_run and not configured_threads_enabled():
         print(
             "Threads posting is disabled by "
