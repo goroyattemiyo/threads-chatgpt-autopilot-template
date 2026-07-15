@@ -31,12 +31,24 @@
 
 利用者が投稿内容と日時を確定したと明確に判断できない場合は、`draft`で保存します。
 
+## アカウント安全ロック
+
+`config/service.yml`の`account_safety.posting_locked`が`true`の場合、本番投稿は停止中です。
+
+- `posting.enable_threads: true`でも、安全ロックを優先する
+- ロック中もdry run、投稿予定確認、履歴確認は実施できる
+- 利用者の明示依頼なしに`posting_locked`を`false`へ変更しない
+- 解除前にThreads／Instagramのアカウント状態、Threads実画面、投稿台帳、Actions結果を確認する
+- `lock_reason`へパスワード、トークン、Secrets、二段階認証コードを書かない
+- 詳細は`docs/ACCOUNT_SAFETY.md`を確認する
+
 ## 自動投稿直前の安全確認
 
 `status: ready`へ変更すると、設定時刻との関係によっては次回のGitHub Actions実行で投稿される可能性があります。
 
 以下の場合は、勝手に`ready`へ変更せず`draft`で保存し、利用者へ確認します。
 
+- アカウント安全ロックが有効
 - 投稿時刻がすでに到来している
 - 投稿時刻まで30分以内
 - 日時または本文が曖昧
@@ -49,13 +61,14 @@
 
 Scheduledによる自動投稿を検証するときは、手動実行と条件を混ぜません。開始前に次を確認します。
 
-1. `config/service.yml`の`posting.enable_threads`が`true`
-2. 対象投稿が新しい一意の`id`を持つ
-3. 対象投稿が`status: ready`
-4. `scheduled_at`と`publish_after`が意図した時刻
-5. 画像付き投稿は`image_url`と`alt`が設定済み
-6. 同じ時刻に別の`ready`投稿がない
-7. テスト中は`Run workflow`を押さず、Scheduledだけを待つ
+1. `config/service.yml`の`account_safety.posting_locked`が`false`
+2. `config/service.yml`の`posting.enable_threads`が`true`
+3. 対象投稿が新しい一意の`id`を持つ
+4. 対象投稿が`status: ready`
+5. `scheduled_at`と`publish_after`が意図した時刻
+6. 画像付き投稿は`image_url`と`alt`が設定済み
+7. 同じ時刻に別の`ready`投稿がない
+8. テスト中は`Run workflow`を押さず、Scheduledだけを待つ
 
 判定時は、ActionsのScheduled Run、対象投稿の`status`、`threads_post_id`、`posted_at`、Threads画面を照合します。Scheduled Runが確認できない場合、投稿設定やThreads APIの問題と断定せず、Workflowのスケジュール発火問題として切り分けます。
 
@@ -118,5 +131,6 @@ status: cancelled
 - 投稿済みIDを空に戻して再投稿可能にする
 - `status: posted`を理由なく`ready`へ戻す
 - エラー原因を確認せず同じ投稿を再実行する
+- 利用者の明示確認なしにアカウント安全ロックを解除する
 - Threads以外のSNS対応を、既存機能として案内する
 - 利用者の明示依頼なしにワークフローやPythonコードを変更する
