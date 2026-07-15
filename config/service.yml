@@ -8,6 +8,13 @@ service:
 threads:
   account_label: your_threads_account
 
+# アカウント制限、審査、投稿結果不明などの確認中に使う手動安全ロックです。
+# trueの間は本番投稿を停止しますが、dry runは実行できます。
+# lock_reasonへパスワード、トークン、Secretsなどの機密情報を書かないでください。
+account_safety:
+  posting_locked: false
+  lock_reason: ""
+
 posting:
   # 自動投稿で使用する投稿枠です。
   # 時刻を追加・変更すると、同期workflowがGitHub Actionsのcronを自動更新します。
